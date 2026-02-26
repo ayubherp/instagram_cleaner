@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instagram Cleaner Dashboard</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #12121a;
+            --card: #1a1a26;
+            --border: #2a2a3d;
+            --accent: #e040fb;
+            --accent2: #00e5ff;
+            --accent3: #69ff47;
+            --warn: #ff9800;
+            --danger: #ff3d57;
+            --text: #f0f0ff;
+            --muted: #6b6b8a;
+            --mono: 'JetBrains Mono', monospace;
+            --sans: 'Syne', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated background grid */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(224, 64, 251, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(224, 64, 251, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 30px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 36px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        h1 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        h1 span {
+            color: var(--accent);
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            padding: 8px 16px;
+            font-size: 0.8rem;
+            font-family: var(--mono);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent3);
+            box-shadow: 0 0 8px var(--accent3);
+            animation: pulse 2s infinite;
+        }
+
+        .dot.idle {
+            background: var(--muted);
+            box-shadow: none;
+            animation: none;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* Stats row */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .stat-card:hover {
+            border-color: var(--accent);
+        }
+
+        .stat-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .stat-card:hover::after {
+            opacity: 1;
+        }
+
+        .stat-label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            font-family: var(--mono);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+
+        .stat-sub {
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-family: var(--mono);
+        }
+
+        .stat-value.green {
+            color: var(--accent3);
+        }
+
+        .stat-value.cyan {
+            color: var(--accent2);
+        }
+
+        .stat-value.purple {
+            color: var(--accent);
+        }
+
+        .stat-value.warn {
+            color: var(--warn);
+        }
+
+        /* Limit bars */
+        .limits-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .limit-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 22px;
+        }
+
+        .limit-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .limit-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .limit-badge {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            padding: 3px 10px;
+            border-radius: 100px;
+            background: rgba(224, 64, 251, 0.15);
+            color: var(--accent);
+            border: 1px solid rgba(224, 64, 251, 0.3);
+        }
+
+        .limit-counts {
+            font-family: var(--mono);
+            font-size: 1.6rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .limit-counts span {
+            color: var(--muted);
+            font-size: 1rem;
+        }
+
+        .bar-bg {
+            height: 10px;
+            background: var(--border);
+            border-radius: 100px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 100px;
+            transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+        }
+
+        .bar-fill::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 20px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 100px;
+            filter: blur(4px);
+        }
+
+        .bar-hourly {
+            background: linear-gradient(90deg, var(--accent2), #0097a7);
+        }
+
+        .bar-daily {
+            background: linear-gradient(90deg, var(--accent), #9c27b0);
+        }
+
+        .bar-warn {
+            background: linear-gradient(90deg, var(--warn), #e53935);
+        }
+
+        /* Main content grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 360px;
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 22px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Log feed */
+        .log-feed {
+            padding: 14px;
+            height: 320px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .log-feed::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .log-feed::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .log-feed::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .log-entry {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: var(--surface);
+            border: 1px solid transparent;
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .log-entry.removed {
+            border-color: rgba(255, 61, 87, 0.3);
+            background: rgba(255, 61, 87, 0.05);
+        }
+
+        .log-entry.detected {
+            border-color: rgba(255, 152, 0, 0.3);
+            background: rgba(255, 152, 0, 0.05);
+        }
+
+        .log-entry.info {
+            border-color: rgba(0, 229, 255, 0.2);
+            background: rgba(0, 229, 255, 0.03);
+        }
+
+        .log-entry.success {
+            border-color: rgba(105, 255, 71, 0.2);
+            background: rgba(105, 255, 71, 0.03);
+        }
+
+        .log-icon {
+            font-size: 1rem;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .log-time {
+            color: var(--muted);
+            flex-shrink: 0;
+        }
+
+        .log-msg {
+            color: var(--text);
+            line-height: 1.4;
+        }
+
+        .log-msg .username {
+            color: var(--accent2);
+        }
+
+        .log-msg .score {
+            color: var(--warn);
+        }
+
+        /* Queue panel */
+        .queue-list {
+            padding: 14px;
+            height: 320px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .queue-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .queue-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .queue-list::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            background: var(--surface);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            animation: slideIn 0.3s ease;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--border), var(--card));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--muted);
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .queue-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .queue-username {
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: var(--mono);
+            color: var(--accent2);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .queue-flags {
+            display: flex;
+            gap: 4px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+        }
+
+        .flag-tag {
+            font-size: 0.62rem;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-family: var(--mono);
+            background: rgba(255, 152, 0, 0.15);
+            color: var(--warn);
+            border: 1px solid rgba(255, 152, 0, 0.3);
+        }
+
+        .score-badge {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .score-high {
+            background: rgba(255, 61, 87, 0.2);
+            color: var(--danger);
+            border: 1px solid rgba(255, 61, 87, 0.4);
+        }
+
+        .score-mid {
+            background: rgba(255, 152, 0, 0.2);
+            color: var(--warn);
+            border: 1px solid rgba(255, 152, 0, 0.4);
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 22px;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            font-family: var(--sans);
+            font-size: 0.85rem;
+            font-weight: 700;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.1);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover::after {
+            opacity: 1;
+        }
+
+        .btn:active {
+            transform: scale(0.97);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #9c27b0);
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(224, 64, 251, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-danger {
+            background: rgba(255, 61, 87, 0.15);
+            color: var(--danger);
+            border: 1px solid rgba(255, 61, 87, 0.3);
+        }
+
+        .btn-success {
+            background: rgba(105, 255, 71, 0.15);
+            color: var(--accent3);
+            border: 1px solid rgba(105, 255, 71, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Config panel */
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .config-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+        }
+
+        .config-label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-family: var(--mono);
+            margin-bottom: 10px;
+        }
+
+        .config-input {
+            width: 100%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 1rem;
+            font-weight: 600;
+            padding: 8px 12px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .config-input:focus {
+            border-color: var(--accent);
+        }
+
+        /* Chart */
+        .chart-panel {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 22px;
+            margin-bottom: 24px;
+        }
+
+        .chart-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+            color: var(--muted);
+        }
+
+        .chart-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            height: 100px;
+        }
+
+        .chart-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .chart-bar {
+            width: 100%;
+            border-radius: 6px 6px 0 0;
+            background: linear-gradient(180deg, var(--accent), rgba(224, 64, 251, 0.3));
+            transition: height 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            min-height: 4px;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .chart-bar:hover {
+            filter: brightness(1.3);
+        }
+
+        .chart-bar-label {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            color: var(--muted);
+        }
+
+        .chart-bar-val {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        /* Dry run toggle */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 18px;
+            background: rgba(255, 152, 0, 0.08);
+            border: 1px solid rgba(255, 152, 0, 0.25);
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .toggle input {
+            display: none;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: var(--border);
+            border-radius: 100px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            left: 3px;
+            top: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle input:checked+.toggle-slider {
+            background: var(--accent3);
+        }
+
+        .toggle input:checked+.toggle-slider::before {
+            transform: translateX(20px);
+        }
+
+        .toggle-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .toggle-desc {
+            font-size: 0.78rem;
+            color: var(--muted);
+            margin-left: auto;
+            font-family: var(--mono);
+        }
+
+        /* Empty state */
+        .empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: var(--muted);
+            gap: 10px;
+            font-size: 0.85rem;
+            font-family: var(--mono);
+        }
+
+        .empty-icon {
+            font-size: 2rem;
+            opacity: 0.4;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .limits-row {
+                grid-template-columns: 1fr;
+            }
+
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .config-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon">🤖</div>
+                <div>
+                    <h1>Insta<span>Cleaner</span></h1>
+                    <div style="font-size:0.72rem;color:var(--muted);font-family:var(--mono);">bot follower remover
+                    </div>
+                </div>
+            </div>
+            <div class="status-pill">
+                <div class="dot idle" id="statusDot"></div>
+                <span id="statusText">Idle</span>
+            </div>
+        </header>
+
+        <!-- Dry Run Toggle -->
+        <div class="toggle-row">
+            <label class="toggle">
+                <input type="checkbox" id="dryRunToggle" checked onchange="toggleDryRun()">
+                <div class="toggle-slider"></div>
+            </label>
+            <span class="toggle-label" id="dryRunLabel">🧪 Dry Run Mode — ON</span>
+            <span class="toggle-desc" id="dryRunDesc">Simulating only, nothing removed</span>
+        </div>
+
+        <!-- Config -->
+        <div class="config-grid">
+            <div class="config-card">
+                <div class="config-label">Max / Hour</div>
+                <input class="config-input" type="number" id="maxHour" value="50" min="1" max="200"
+                    onchange="updateConfig()">
+            </div>
+            <div class="config-card">
+                <div class="config-label">Max / Day</div>
+                <input class="config-input" type="number" id="maxDay" value="700" min="1" max="5000"
+                    onchange="updateConfig()">
+            </div>
+            <div class="config-card">
+                <div class="config-label">Min Bot Score (1-8)</div>
+                <input class="config-input" type="number" id="minScore" value="3" min="1" max="8"
+                    onchange="updateConfig()">
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Removed Today</div>
+                <div class="stat-value purple" id="statRemovedDay">0</div>
+                <div class="stat-sub" id="statRemovedDaySub">of 1000 daily limit</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Removed This Hour</div>
+                <div class="stat-value cyan" id="statRemovedHour">0</div>
+                <div class="stat-sub" id="statRemovedHourSub">of 70 hourly limit</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Bots Detected</div>
+                <div class="stat-value warn" id="statDetected">0</div>
+                <div class="stat-sub">in current session</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Queue Size</div>
+                <div class="stat-value green" id="statQueue">0</div>
+                <div class="stat-sub">pending removal</div>
+            </div>
+        </div>
+
+        <!-- Limit Bars -->
+        <div class="limits-row">
+            <div class="limit-card">
+                <div class="limit-header">
+                    <div class="limit-title">⏱ Hourly Limit</div>
+                    <div class="limit-badge" id="hourlyPct">0%</div>
+                </div>
+                <div class="limit-counts">
+                    <span id="hourlyUsed">0</span> <span>/ <span id="hourlyMax">100</span></span>
+                </div>
+                <div class="bar-bg">
+                    <div class="bar-fill bar-hourly" id="barHourly" style="width:0%"></div>
+                </div>
+            </div>
+            <div class="limit-card">
+                <div class="limit-header">
+                    <div class="limit-title">📅 Daily Limit</div>
+                    <div class="limit-badge" id="dailyPct">0%</div>
+                </div>
+                <div class="limit-counts">
+                    <span id="dailyUsed">0</span> <span>/ <span id="dailyMax">2000</span></span>
+                </div>
+                <div class="bar-bg">
+                    <div class="bar-fill bar-daily" id="barDaily" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <button class="btn btn-primary" id="btnStart" onclick="startSession()">▶ Start Cleaning</button>
+            <button class="btn btn-danger" id="btnStop" onclick="stopSession()" disabled>⏹ Stop</button>
+            <button class="btn btn-secondary" onclick="resetCounters()">🔄 Reset Counters</button>
+            <button class="btn btn-success" onclick="addDemoData()">🧪 Load Demo Data</button>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Activity Log -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">📋 Activity Log</div>
+                    <button class="btn btn-secondary" style="padding:6px 14px;font-size:0.75rem;"
+                        onclick="clearLog()">Clear</button>
+                </div>
+                <div class="log-feed" id="logFeed">
+                    <div class="empty">
+                        <div class="empty-icon">📋</div>
+                        <div>No activity yet — press Start</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Queue -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">🎯 Bot Queue</div>
+                    <span style="font-family:var(--mono);font-size:0.75rem;color:var(--muted)" id="queueCount">0
+                        pending</span>
+                </div>
+                <div class="queue-list" id="queueList">
+                    <div class="empty">
+                        <div class="empty-icon">🎯</div>
+                        <div>Queue is empty</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Daily Chart -->
+        <div class="chart-panel">
+            <div class="chart-title">📊 Removals — Last 7 Days</div>
+            <div class="chart-bars" id="chartBars"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const API = 'http://localhost:5000/api';
+        let lastLogId = 0;
+        let knownQueueNames = new Set();
+        let pollInterval = null;
+
+        // ── API helpers ────────────────────────────────────────────────────────
+        async function apiFetch(path, opts = {}) {
+            try {
+                const res = await fetch(API + path, {
+                    headers: { 'Content-Type': 'application/json' },
+                    ...opts
+                });
+                return await res.json();
+            } catch (e) {
+                console.error('API error:', path, e);
+                return null;
+            }
+        }
+
+        // ── Render ─────────────────────────────────────────────────────────────
+        function renderChart(history) {
+            const container = document.getElementById('chartBars');
+            if (!history || history.length === 0) { container.innerHTML = ''; return; }
+            const labels = history.map(h => h.date.slice(5));   // MM-DD
+            const values = history.map(h => h.count);
+            const max = Math.max(...values, 1);
+            container.innerHTML = history.map((h, i) => `
+      <div class="chart-col">
+        <div class="chart-bar-val">${h.count}</div>
+        <div class="chart-bar" style="height:${(h.count / max) * 80}px" title="${h.count} removed"></div>
+        <div class="chart-bar-label">${labels[i]}</div>
+      </div>
+    `).join('');
+        }
+
+        function updateBars(removedHour, removedToday, maxHour, maxDay) {
+            const hp = Math.min((removedHour / maxHour) * 100, 100);
+            const dp = Math.min((removedToday / maxDay) * 100, 100);
+            document.getElementById('barHourly').style.width = hp + '%';
+            document.getElementById('barDaily').style.width = dp + '%';
+            document.getElementById('hourlyPct').textContent = hp.toFixed(0) + '%';
+            document.getElementById('dailyPct').textContent = dp.toFixed(0) + '%';
+            document.getElementById('hourlyUsed').textContent = removedHour;
+            document.getElementById('dailyUsed').textContent = removedToday;
+            document.getElementById('barHourly').className = 'bar-fill ' + (hp > 80 ? 'bar-warn' : 'bar-hourly');
+            document.getElementById('barDaily').className = 'bar-fill ' + (dp > 80 ? 'bar-warn' : 'bar-daily');
+        }
+
+        function renderLog(entry) {
+            const feed = document.getElementById('logFeed');
+            const empty = feed.querySelector('.empty');
+            if (empty) empty.remove();
+            const el = document.createElement('div');
+            el.className = `log-entry ${entry.type}`;
+            el.innerHTML = `
+      <span class="log-icon">${entry.icon}</span>
+      <span class="log-time">${entry.time}</span>
+      <span class="log-msg">${entry.message}</span>
+    `;
+            feed.appendChild(el);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function renderQueueItem(user) {
+            if (knownQueueNames.has(user.username)) return;
+            knownQueueNames.add(user.username);
+            const list = document.getElementById('queueList');
+            const empty = list.querySelector('.empty');
+            if (empty) empty.remove();
+            const initials = user.username.slice(0, 2).toUpperCase();
+            const flagsHtml = (user.flags || []).map(f => `<span class="flag-tag">${f}</span>`).join('');
+            const scoreClass = user.score >= 5 ? 'score-high' : 'score-mid';
+            const el = document.createElement('div');
+            el.className = 'queue-item';
+            el.id = 'q-' + user.username;
+            el.innerHTML = `
+      <div class="avatar">${initials}</div>
+      <div class="queue-info">
+        <div class="queue-username">@${user.username}</div>
+        <div class="queue-flags">${flagsHtml}</div>
+      </div>
+      <div class="score-badge ${scoreClass}">${user.score}</div>
+    `;
+            list.appendChild(el);
+            list.scrollTop = list.scrollHeight;
+        }
+
+        function syncQueue(serverQueue) {
+            const serverNames = new Set(serverQueue.map(u => u.username));
+            // Remove items no longer in server queue
+            for (const name of [...knownQueueNames]) {
+                if (!serverNames.has(name)) {
+                    knownQueueNames.delete(name);
+                    const el = document.getElementById('q-' + name);
+                    if (el) {
+                        el.style.opacity = '0';
+                        el.style.transform = 'translateX(20px)';
+                        el.style.transition = 'all 0.3s';
+                        setTimeout(() => el.remove(), 300);
+                    }
+                }
+            }
+            // Add new items
+            serverQueue.forEach(renderQueueItem);
+
+            // Empty state
+            const list = document.getElementById('queueList');
+            if (serverQueue.length === 0 && list.children.length === 0) {
+                list.innerHTML = '<div class="empty"><div class="empty-icon">🎯</div><div>Queue is empty</div></div>';
+            }
+        }
+
+        // ── Poll server every 2s ───────────────────────────────────────────────
+        async function poll() {
+            const s = await apiFetch('/state');
+            if (!s) return;
+
+            const cfg = s.config;
+
+            // Update stats
+            document.getElementById('statRemovedDay').textContent = s.removed_today;
+            document.getElementById('statRemovedHour').textContent = s.removed_hour;
+            document.getElementById('statDetected').textContent = s.detected;
+            document.getElementById('statQueue').textContent = s.queue_size;
+            document.getElementById('queueCount').textContent = s.queue_size + ' pending';
+            document.getElementById('statRemovedDaySub').textContent = `of ${cfg.max_day} daily limit`;
+            document.getElementById('statRemovedHourSub').textContent = `of ${cfg.max_hour} hourly limit`;
+            document.getElementById('hourlyMax').textContent = cfg.max_hour;
+            document.getElementById('dailyMax').textContent = cfg.max_day;
+
+            updateBars(s.removed_hour, s.removed_today, cfg.max_hour, cfg.max_day);
+            renderChart(s.daily_history);
+
+            // Running state
+            const running = s.running;
+            document.getElementById('btnStart').disabled = running;
+            document.getElementById('btnStop').disabled = !running;
+            const dot = document.getElementById('statusDot');
+            if (running) { dot.classList.remove('idle'); document.getElementById('statusText').textContent = 'Running'; }
+            else { dot.classList.add('idle'); document.getElementById('statusText').textContent = 'Idle'; }
+
+            // Fetch new logs since last check
+            const newLogs = await apiFetch(`/logs?since=${lastLogId}`);
+            if (newLogs && newLogs.length) {
+                newLogs.forEach(renderLog);
+                lastLogId += newLogs.length;
+            }
+
+            // Sync queue
+            const queue = await apiFetch('/queue');
+            if (queue) syncQueue(queue);
+        }
+
+        // ── Controls ───────────────────────────────────────────────────────────
+        async function startSession() {
+            const dryRun = document.getElementById('dryRunToggle').checked;
+            await apiFetch('/start', {
+                method: 'POST',
+                body: JSON.stringify({ dry_run: dryRun })
+            });
+        }
+
+        async function stopSession() {
+            await apiFetch('/stop', { method: 'POST' });
+        }
+
+        async function resetCounters() {
+            await apiFetch('/reset', { method: 'POST' });
+        }
+
+        async function updateConfig() {
+            const maxHour = parseInt(document.getElementById('maxHour').value) || 100;
+            const maxDay = parseInt(document.getElementById('maxDay').value) || 2000;
+            const minScore = parseInt(document.getElementById('minScore').value) || 3;
+            await apiFetch('/config', {
+                method: 'POST',
+                body: JSON.stringify({ max_hour: maxHour, max_day: maxDay, min_score: minScore })
+            });
+        }
+
+        function toggleDryRun() {
+            const dryRun = document.getElementById('dryRunToggle').checked;
+            document.getElementById('dryRunLabel').textContent =
+                dryRun ? '🧪 Dry Run Mode — ON' : '🔴 Live Mode — ON';
+            document.getElementById('dryRunDesc').textContent =
+                dryRun ? 'Simulating only, nothing removed' : '⚠️ Accounts will be REMOVED';
+            document.getElementById('dryRunDesc').style.color = dryRun ? 'var(--muted)' : 'var(--danger)';
+        }
+
+        function clearLog() {
+            document.getElementById('logFeed').innerHTML =
+                '<div class="empty"><div class="empty-icon">📋</div><div>Log cleared</div></div>';
+            lastLogId = 0;
+        }
+
+        function addDemoData() {
+            // Just trigger a poll to show current real data
+            poll();
+        }
+
+        // ── Init ───────────────────────────────────────────────────────────────
+        renderChart([]);
+        poll();
+        pollInterval = setInterval(poll, 2000);
+    </script>
+</body>
+
+</html>
