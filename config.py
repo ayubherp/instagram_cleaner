@@ -12,7 +12,7 @@ config = {
     "min_bot_score": 3,                # flags needed to remove
     
     # Schedule (run once per day at a random time)
-    "run_hour_range": (7, 22),        # only run between 7am-10pm
+    "run_hour_range": (7, 23),        # only run between 7am-10pm
     
     # Safety
     "whitelist": ["friend1", "brand_collab"],  # never remove these

@@ -27,8 +27,8 @@ def score_account(user_info) -> dict:
     # Ratio signals
     following = user_info.following_count or 1
     follower  = user_info.follower_count or 0
-    flags["follow_bomb"]  = following > 3000 and follower < 100
-    flags["mass_follower"] = following > 7500  # near Instagram's limit
+    flags["follow_bomb"]  = following > 500 and follower < 100
+    flags["mass_follower"] = following > 2500  # near Instagram's limit
 
     # Username pattern signals
     username = user_info.username

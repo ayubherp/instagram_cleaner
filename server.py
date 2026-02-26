@@ -15,6 +15,10 @@ from state import shared_state
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)  # only show errors, not every GET request
+
 # ── API Routes ──────────────────────────────────────────────────────────────
 
 @app.route('/')
