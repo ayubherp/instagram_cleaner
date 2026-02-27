@@ -4,9 +4,9 @@ config = {
     "max_removals_per_hour": 60,
     
     # Delays (seconds) — randomized to look human
-    "delay_between_actions": (8, 20),  # random between 8-20s
-    "delay_between_batches": (60, 120),# rest between batches
-    "batch_size": 5,                   # actions per batch
+    "delay_between_actions": (5, 15),  # random between 8-20s
+    "delay_between_batches": (45, 90),# rest between batches
+    "batch_size": 10,                   # actions per batch
     
     # Bot detection thresholds
     "min_bot_score": 3,                # flags needed to remove
