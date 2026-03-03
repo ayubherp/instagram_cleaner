@@ -1,13 +1,19 @@
 """
 main.py - Instagram bot cleaner
- 
-Cache strategy:
-- Fetches all followers ONCE, saves to cache permanently
-- Tracks scan position — restart continues exactly where stopped
-- Removed users deleted from cache immediately
-- Cache only refreshes when ALL candidates are scanned (empty)
-- Or manually: delete session/followers_cache.json to force refresh
-- Never expires by date — perfect for laptop on/off usage
+
+Flow:
+  Step 1 — Fetch ALL following via user_following_v1 → save to following_cache.json.
+            Fully completes before anything else starts. Re-fetches if cache is empty.
+  Step 2 — Fetch followers in batches of 200 via user_followers_v1_chunk.
+            Each batch is immediately filtered (mutuals + whitelist) and appended
+            to followers_cache.json. Resumes from cursor on restart.
+  Step 3 — Bot scanning starts once pending candidates >= BOT_SCAN_THRESHOLD (700),
+            or when follower fetch is fully complete. Interleaves with Step 2.
+
+Restart safety:
+  - following_cache.json  → re-used if non-empty, otherwise re-fetched
+  - followers_cache.json  → resumes from saved cursor; scanned_pks prevents re-adding
+  - Delete both files to start completely fresh
 """
 
 import time
@@ -25,13 +31,16 @@ from bot_detector import score_account
 
 load_dotenv()
 
-USERNAME     = os.environ.get("IG_USER")
-PASSWORD     = os.environ.get("IG_PASS")
-TWO_FA       = os.environ.get("IG_2FA_SECRET")
-SESSION_FILE = "session/session.json"
-CACHE_FILE   = "session/followers_cache.json"
+USERNAME           = os.environ.get("IG_USER")
+PASSWORD           = os.environ.get("IG_PASS")
+TWO_FA             = os.environ.get("IG_2FA_SECRET")
+SESSION_FILE       = "session/session.json"
+FOLLOWING_CACHE    = "session/following_cache.json"
+FOLLOWERS_CACHE    = "session/followers_cache.json"
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+BOT_SCAN_THRESHOLD = 700  # start scanning once this many candidates are cached
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 os.makedirs("session", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +58,7 @@ def log_both(message: str, log_type: str = 'info', icon: str = 'ℹ️', level: 
     shared_state.add_log(message, log_type=log_type, icon=icon)
 
 
-# ── 2FA ──────────────────────────────────────────────────────────────────────
+# ── 2FA ───────────────────────────────────────────────────────────────────────
 
 def get_totp_code(secret: str) -> str:
     return pyotp.TOTP(secret).now()
@@ -87,54 +96,232 @@ def get_client() -> Client:
     return cl
 
 
-# ── Cache helpers ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 1 — Following cache
+# Fetched once via user_following_v1. Must fully complete before Step 2 begins.
+# ══════════════════════════════════════════════════════════════════════════════
 
-def load_cache() -> dict | None:
+def get_following_pks(cl, user_id) -> set:
     """
-    Load cache from disk.
-    Returns dict with 'pending' and 'scanned_count' or None if not found.
+    Returns the full set of following PKs.
+    Loads from cache when non-empty. Re-fetches if missing or empty (invalid).
+    Only writes cache AFTER the full result is in hand — no partial saves.
     """
-    if not os.path.exists(CACHE_FILE):
-        return None
-    try:
-        with open(CACHE_FILE) as f:
-            return json.load(f)
-    except Exception as e:
-        log.warning(f"Cache read failed: {e}")
-        return None
+    if os.path.exists(FOLLOWING_CACHE):
+        try:
+            with open(FOLLOWING_CACHE) as f:
+                data = json.load(f)
+            pks = data.get("pks", [])
+            if len(pks) > 0:
+                log_both(
+                    f"Step 1 · Following cache loaded ✓ · {len(pks)} accounts · "
+                    f"mutuals will be filtered from followers",
+                    log_type='success', icon='✅'
+                )
+                return set(pks)
+            else:
+                log_both(
+                    "Step 1 · Following cache was empty — deleting and re-fetching...",
+                    log_type='warn', icon='⚠️', level='warning'
+                )
+                os.remove(FOLLOWING_CACHE)
+        except Exception as e:
+            log_both(
+                f"Step 1 · Following cache read failed ({e}) — re-fetching...",
+                log_type='warn', icon='⚠️', level='warning'
+            )
+
+    log_both(
+        "Step 1 · Fetching all following accounts — completes fully before follower fetch starts...",
+        log_type='info', icon='📡'
+    )
+
+    following = cl.user_following_v1(user_id, amount=0)
+    pks = [u.pk for u in following]
+
+    if len(pks) > 0:
+        with open(FOLLOWING_CACHE, "w") as f:
+            json.dump({"pks": pks}, f)
+        log_both(
+            f"Step 1 · Following fetched & cached ✓ · {len(pks)} accounts · "
+            f"starting follower fetch now",
+            log_type='success', icon='💾'
+        )
+    else:
+        log_both(
+            "Step 1 · Warning: following list returned 0 — mutual filtering may not work!",
+            log_type='warn', icon='⚠️', level='warning'
+        )
+
+    return set(pks)
 
 
-def save_cache(pending: list, scanned_count: int, total_fetched: int):
-    """Save full cache state to disk"""
-    data = {
-        "total_fetched":  total_fetched,   # original total when first fetched
-        "scanned_count":  scanned_count,   # how many scanned so far (all time)
-        "pending":        pending,         # remaining unscanned candidates
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 2 — Followers cache
+# Fetched in batches of 200. Mutuals filtered per batch. Appended to cache.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def load_followers_cache() -> dict:
+    """
+    {
+        "fetch_complete": bool,
+        "next_max_id":    str,         # "" = start from beginning
+        "scanned_count":  int,
+        "total_fetched":  int,
+        "scanned_pks":    [int, ...],  # PKs already scanned — prevents re-adding on resume
+        "pending":        [{"pk": int, "username": str}, ...]
     }
-    with open(CACHE_FILE, "w") as f:
-        json.dump(data, f)
+    """
+    if os.path.exists(FOLLOWERS_CACHE):
+        try:
+            with open(FOLLOWERS_CACHE) as f:
+                data = json.load(f)
+            # backfill scanned_pks if missing (old cache format)
+            if "scanned_pks" not in data:
+                data["scanned_pks"] = []
+            return data
+        except Exception as e:
+            log.warning(f"Followers cache read failed: {e}")
+    return {
+        "fetch_complete": False,
+        "next_max_id":    "",
+        "scanned_count":  0,
+        "total_fetched":  0,
+        "scanned_pks":    [],
+        "pending":        []
+    }
 
 
-def update_cache_progress(pending: list, scanned_count: int, total_fetched: int):
-    """Update cache after each scan — saves position for restart"""
-    save_cache(pending, scanned_count, total_fetched)
+def save_followers_cache(cache: dict):
+    with open(FOLLOWERS_CACHE, "w") as f:
+        json.dump(cache, f)
 
 
-def remove_from_cache(pk, pending: list, scanned_count: int, total_fetched: int):
-    """Remove a user from cache immediately after removal"""
-    updated = [u for u in pending if u["pk"] != pk]
-    save_cache(updated, scanned_count, total_fetched)
-    return updated
+def fetch_one_follower_batch(cl, user_id, max_id: str,
+                              following_pks: set, whitelist: list,
+                              seen_pks: set) -> tuple:
+    """
+    Fetches one page (~200) via user_followers_v1_chunk.
+    Filters mutuals and whitelisted accounts. Updates seen_pks in-place.
+    Returns (new_candidates, next_max_id_str, raw_page_count, skipped_mutuals).
+    """
+    users, next_max_id = cl.user_followers_v1_chunk(
+        user_id, max_amount=200, max_id=max_id
+    )
+
+    new_candidates  = []
+    skipped_mutuals = 0
+    for u in users:
+        if u.pk in seen_pks:
+            continue
+        seen_pks.add(u.pk)
+        if u.pk in following_pks:
+            skipped_mutuals += 1
+            continue
+        if u.username in whitelist:
+            continue
+        new_candidates.append({"pk": u.pk, "username": u.username})
+
+    return new_candidates, (next_max_id or ""), len(users), skipped_mutuals
 
 
-def clear_cache():
-    """Delete cache to force a fresh fetch next run"""
-    if os.path.exists(CACHE_FILE):
-        os.remove(CACHE_FILE)
-        log_both("Cache cleared — will re-fetch on next run", log_type='info', icon='🔄')
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 3 — Bot scanning
+# ══════════════════════════════════════════════════════════════════════════════
+
+def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
+    """
+    Scans all current pending candidates. Removes bots.
+    Returns (updated_cache, count_scanned_this_round).
+    """
+    pending       = followers_cache["pending"]
+    scanned_count = followers_cache["scanned_count"]
+    scanned_pks   = followers_cache["scanned_pks"]
+    batch_count   = 0
+    scanned_round = 0
+
+    remaining = list(pending)  # snapshot — new arrivals from fetch won't interfere
+
+    for user in remaining:
+        pk       = user["pk"]
+        username = user["username"]
+
+        if not shared_state.running:
+            log_both("Stopped by user.", log_type='info', icon='⏹')
+            break
+
+        if not cfg['dry_run'] and not shared_state.can_remove():
+            limit_type = "Daily" if shared_state.removed_today >= cfg['max_day'] else "Hourly"
+            log_both(f"{limit_type} limit reached — stopping.", log_type='warn', icon='🚫')
+            break
+
+        try:
+            info   = cl.user_info(pk)
+            result = score_account(info, cfg)
+
+            scanned_round += 1
+            scanned_count += 1
+
+            # Mark as scanned — remove from pending, record pk so it's never re-added
+            pending = [u for u in pending if u["pk"] != pk]
+            scanned_pks.append(pk)
+            followers_cache["pending"]       = pending
+            followers_cache["scanned_count"] = scanned_count
+            followers_cache["scanned_pks"]   = scanned_pks
+
+            if result['score'] >= cfg['min_score']:
+                shared_state.detected += 1
+                flag_list = [k for k, v in result['flags'].items() if v]
+
+                shared_state.add_to_queue({
+                    'username': result['username'],
+                    'score':    result['score'],
+                    'flags':    flag_list,
+                })
+
+                if cfg['dry_run']:
+                    log_both(
+                        f"[DRY RUN] @{result['username']} · "
+                        f"score {result['score']} · {flag_list}",
+                        log_type='detected', icon='🧪'
+                    )
+                else:
+                    cl.user_remove_follower(pk)
+                    shared_state.increment_removed()
+                    log_both(
+                        f"Removed @{result['username']} · "
+                        f"score {result['score']} · "
+                        f"{shared_state.removed_today}/{cfg['max_day']} today",
+                        log_type='removed', icon='🗑️'
+                    )
+
+                shared_state.remove_from_queue(result['username'])
+
+            save_followers_cache(followers_cache)
+
+            time.sleep(random.uniform(cfg.get('delay_min', 8), cfg.get('delay_max', 20)))
+
+            batch_count += 1
+            if batch_count % cfg.get('batch_size', 5) == 0:
+                rest = random.uniform(90, 180)
+                log_both(f"Batch rest {rest:.0f}s...", log_type='info', icon='💤')
+                time.sleep(rest)
+
+        except RateLimitError:
+            log_both("Rate limit hit — pausing 15 mins.", log_type='warn', icon='⚠️', level='warning')
+            save_followers_cache(followers_cache)
+            time.sleep(900)
+
+        except Exception as e:
+            log_both(f"Error on @{username}: {e}", log_type='warn', icon='❌', level='warning')
+            time.sleep(10)
+
+    return followers_cache, scanned_round
 
 
-# ── Main cleanup ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
 
 def run_daily_cleanup():
     cfg = shared_state.config
@@ -156,177 +343,123 @@ def run_daily_cleanup():
     )
 
     try:
-        cl = get_client()
+        cl        = get_client()
         user_id   = cl.user_id
         whitelist = cfg.get('whitelist', [])
 
-        # ── Step 1: Load cache OR fetch fresh ────────────────────────────
-        cache = load_cache()
+        # ── STEP 1: Get following PKs — blocks until fully complete ───────────
+        following_pks = get_following_pks(cl, user_id)
 
-        if cache and len(cache.get("pending", [])) > 0:
-            # ── Resume from cache ─────────────────────────────────────
-            pending       = cache["pending"]
-            scanned_count = cache.get("scanned_count", 0)
-            total_fetched = cache.get("total_fetched", len(pending))
+        # ── STEP 2 + 3: Batch-fetch followers, filter, cache, scan ───────────
+        followers_cache = load_followers_cache()
+        fetch_complete  = followers_cache.get("fetch_complete", False)
+        max_id          = followers_cache.get("next_max_id", "")
+        follower_page   = 0
+        total_scanned   = 0
 
+        # seen_pks = pending + already-scanned — prevents re-adding any pk on resume
+        seen_follower_pks = (
+            set(u["pk"] for u in followers_cache["pending"]) |
+            set(followers_cache.get("scanned_pks", []))
+        )
+
+        if fetch_complete:
             log_both(
-                f"Resuming from cache ⚡ · {len(pending)} remaining · "
-                f"{scanned_count} already scanned · "
-                f"{total_fetched} total fetched",
+                f"Step 2 · Follower fetch already complete · "
+                f"{followers_cache['total_fetched']} fetched · "
+                f"{len(followers_cache['pending'])} pending scan",
                 log_type='success', icon='⚡'
             )
-
         else:
-            # ── Fresh fetch ───────────────────────────────────────────
-            if cache and len(cache.get("pending", [])) == 0:
-                log_both(
-                    "All previous candidates scanned! Fetching fresh follower list...",
-                    log_type='info', icon='🔄'
-                )
-            else:
-                log_both(
-                    "No cache found — fetching all followers from Instagram...",
-                    log_type='info', icon='📡'
-                )
-
-            # Fetch following to filter mutuals
-            following = cl.user_following_v1(user_id, amount=0)
-            following_ids = set(u.pk for u in following)
-
-            # Fetch ALL followers (runs once, then cached)
             log_both(
-                "Fetching all followers — this runs once then is cached forever until complete...",
+                "Step 2 · Fetching followers in batches of 200"
+                + (" · resuming from cursor" if max_id else ""),
                 log_type='info', icon='📡'
             )
-            all_followers = cl.user_followers_v1(user_id, amount=0)
 
-            # Build unique candidate list (dict keys = unique PKs)
-            seen_pks = set()
-            pending  = []
-            for u in all_followers:
-                if u.pk in following_ids:
-                    continue
-                if u.username in whitelist:
-                    continue
-                if u.pk in seen_pks:        # ← skip duplicate
-                    continue
-                seen_pks.add(u.pk)
-                pending.append({"pk": u.pk, "username": u.username})
+        while shared_state.running:
 
-            total_fetched = len(all_followers)
-            scanned_count = 0
+            # ── Fetch next follower batch ─────────────────────────────────────
+            if not fetch_complete:
+                try:
+                    new_candidates, next_max_id, raw_count, skipped_mutuals = fetch_one_follower_batch(
+                        cl, user_id, max_id, following_pks, whitelist, seen_follower_pks
+                    )
 
-            # Save to cache immediately
-            save_cache(pending, scanned_count, total_fetched)
+                    followers_cache["total_fetched"] += raw_count
+                    followers_cache["pending"].extend(new_candidates)
+                    followers_cache["next_max_id"] = next_max_id
+                    follower_page += 1
 
-            log_both(
-                f"Fetched {total_fetched} followers · "
-                f"{len(pending)} candidates saved to cache · "
-                f"{total_fetched - len(pending)} skipped (mutual/whitelisted)",
-                log_type='success', icon='💾'
-            )
-
-        # ── Step 2: Scan + remove from pending list ───────────────────────
-        total_scanned_this_session = 0
-        batch_count = 0
-
-        # Work on a copy — we'll update pending as we go
-        remaining = list(pending)
-
-        for user in remaining:
-            pk       = user["pk"]
-            username = user["username"]
-
-            # Check stop signal
-            if not shared_state.running:
-                log_both("Stopped by user.", log_type='info', icon='⏹')
-                break
-
-            # Check limits
-            if not cfg['dry_run'] and not shared_state.can_remove():
-                limit_type = "Daily" if shared_state.removed_today >= cfg['max_day'] else "Hourly"
-                log_both(f"{limit_type} limit reached — stopping.", log_type='warn', icon='🚫')
-                break
-
-            try:
-                info   = cl.user_info(pk)
-                result = score_account(info)
-
-                total_scanned_this_session += 1
-                scanned_count += 1
-
-                # Remove from pending (mark as scanned regardless of score)
-                pending = [u for u in pending if u["pk"] != pk]
-
-                if result['score'] >= cfg['min_score']:
-                    shared_state.detected += 1
-                    flag_list = [k for k, v in result['flags'].items() if v]
-
-                    shared_state.add_to_queue({
-                        'username': result['username'],
-                        'score':    result['score'],
-                        'flags':    flag_list,
-                    })
-
-                    if cfg['dry_run']:
+                    is_done = not bool(next_max_id)
+                    if is_done:
+                        followers_cache["fetch_complete"] = True
+                        fetch_complete = True
                         log_both(
-                            f"[DRY RUN] @{result['username']} · "
-                            f"score {result['score']} · {flag_list}",
-                            log_type='detected', icon='🧪'
+                            f"Step 2 · Follower fetch complete ✓ · "
+                            f"{followers_cache['total_fetched']} total fetched · "
+                            f"{skipped_mutuals} mutuals skipped this page · "
+                            f"{len(followers_cache['pending'])} candidates pending",
+                            log_type='success', icon='🎉'
                         )
                     else:
-                        cl.user_remove_follower(pk)
-                        shared_state.increment_removed()
+                        max_id = next_max_id
                         log_both(
-                            f"Removed @{result['username']} · "
-                            f"score {result['score']} · "
-                            f"{shared_state.removed_today}/{cfg['max_day']} today",
-                            log_type='removed', icon='🗑️'
+                            f"Step 2 · Follower page {follower_page} · "
+                            f"+{len(new_candidates)} candidates · "
+                            f"{skipped_mutuals} mutuals skipped · "
+                            f"{len(followers_cache['pending'])} pending · "
+                            f"{followers_cache['total_fetched']} fetched total",
+                            log_type='info', icon='📥'
                         )
 
-                    shared_state.remove_from_queue(result['username'])
+                    save_followers_cache(followers_cache)
+                    time.sleep(random.uniform(2, 5))
 
-                # Save progress to cache after every scan
-                # So restart picks up exactly here
-                update_cache_progress(pending, scanned_count, total_fetched)
+                except RateLimitError:
+                    log_both("Rate limit during follower fetch — pausing 15 mins.", log_type='warn', icon='⚠️', level='warning')
+                    save_followers_cache(followers_cache)
+                    time.sleep(900)
+                    continue
+                except Exception as e:
+                    log_both(f"Error fetching follower batch: {e}", log_type='warn', icon='❌', level='warning')
+                    time.sleep(15)
+                    continue
 
-                # Random delay
-                delay = random.uniform(
-                    cfg.get('delay_min', 8),
-                    cfg.get('delay_max', 20)
+            # ── Scan bots if threshold met or fetch is done ───────────────────
+            pending_count = len(followers_cache["pending"])
+            should_scan   = fetch_complete or (pending_count >= BOT_SCAN_THRESHOLD)
+
+            if should_scan and pending_count > 0:
+                log_both(
+                    f"Step 3 · Scanning {pending_count} candidates "
+                    + ("(fetch complete)" if fetch_complete else f"(≥{BOT_SCAN_THRESHOLD} threshold met)"),
+                    log_type='info', icon='🔍'
                 )
-                time.sleep(delay)
+                followers_cache, scanned = scan_and_remove_bots(cl, followers_cache, cfg)
+                total_scanned += scanned
 
-                # Batch rest
-                batch_count += 1
-                if batch_count % cfg.get('batch_size', 5) == 0:
-                    rest = random.uniform(90, 180)
-                    time.sleep(rest)
+                if not shared_state.running:
+                    break
 
-            except RateLimitError:
-                log_both("Rate limit hit — pausing 15 mins.", log_type='warn', icon='⚠️', level='warning')
-                # Save progress before long pause
-                update_cache_progress(pending, scanned_count, total_fetched)
-                time.sleep(900)
+            # ── All done? ─────────────────────────────────────────────────────
+            if fetch_complete and len(followers_cache["pending"]) == 0:
+                log_both(
+                    "All candidates scanned! Delete cache files to start fresh next time.",
+                    log_type='success', icon='🎉'
+                )
+                break
 
-            except Exception as e:
-                log_both(f"Error on @{username}: {e}", log_type='warn', icon='❌', level='warning')
-                time.sleep(10)
+            if not fetch_complete:
+                continue
 
-        # ── Check if fully complete ───────────────────────────────────────
-        if len(pending) == 0 and shared_state.running:
-            log_both(
-                "All candidates scanned! Cache will refresh on next run.",
-                log_type='success', icon='🎉'
-            )
-            # Save empty cache — signals fresh fetch next run
-            save_cache([], scanned_count, total_fetched)
+            break
 
-        # ── Session summary ───────────────────────────────────────────────
+        # ── Session summary ───────────────────────────────────────────────────
         log_both(
-            f"Session ended · scanned {total_scanned_this_session} this session · "
+            f"Session ended · scanned {total_scanned} this session · "
             f"removed {shared_state.removed_today} today · "
-            f"{len(pending)} still remaining in cache",
+            f"{len(followers_cache.get('pending', []))} still in candidate queue",
             log_type='success', icon='✅'
         )
 
