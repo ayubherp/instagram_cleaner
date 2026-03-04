@@ -26,15 +26,19 @@ class SharedState:
 
         # Config (matches config.py — overridable from dashboard)
         self.config = {
-            "max_hour":               70,
-            "max_day":                1000,
-            "min_score":              3,
-            "dry_run":                True,
-            "delay_min":              8,
-            "delay_max":              20,
-            "batch_size":             6,
-            "whitelist":              [],
-            "follow_ratio_multiplier": 4.0,   # following >= N × followers → bot flag
+            "max_hour":                77,
+            "max_day":                 770,
+            "min_score":               3,
+            "dry_run":                 False,
+            "delay_min":               3,
+            "delay_max":               8,
+            "batch_size":              10,
+            "batch_rest_min":          30,
+            "batch_rest_max":          60,
+            "whitelist":               [],
+            "follow_ratio_multiplier": 4.0,  # following >= N × followers → bot flag
+            "run_hour_from":           7,    # active window start (24h)
+            "run_hour_until":          23,   # active window end (24h)
         }
 
     # ── Logging ────────────────────────────────────────────────────────────

@@ -10,6 +10,10 @@ Flow:
   Step 3 — Bot scanning starts once pending candidates >= BOT_SCAN_THRESHOLD (700),
             or when follower fetch is fully complete. Interleaves with Step 2.
 
+Time window:
+  - Checked at startup, inside the main fetch loop, and inside each scan loop.
+  - Configurable via run_hour_from / run_hour_until in config (default 8–23).
+
 Restart safety:
   - following_cache.json  → re-used if non-empty, otherwise re-fetched
   - followers_cache.json  → resumes from saved cursor; scanned_pks prevents re-adding
@@ -21,6 +25,7 @@ import random
 import logging
 import os
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, RateLimitError
@@ -58,6 +63,14 @@ def log_both(message: str, log_type: str = 'info', icon: str = 'ℹ️', level: 
     shared_state.add_log(message, log_type=log_type, icon=icon)
 
 
+def in_active_hours(cfg: dict) -> bool:
+    """Returns True if current hour is within run_hour_from and run_hour_until."""
+    now       = datetime.now().hour
+    run_from  = cfg.get('run_hour_from',  8)
+    run_until = cfg.get('run_hour_until', 23)
+    return run_from <= now < run_until
+
+
 # ── 2FA ───────────────────────────────────────────────────────────────────────
 
 def get_totp_code(secret: str) -> str:
@@ -69,7 +82,7 @@ def get_totp_code(secret: str) -> str:
 def get_client() -> Client:
     cl = Client()
     cfg = shared_state.config
-    cl.delay_range = [cfg.get('delay_min', 8), cfg.get('delay_max', 20)]
+    cl.delay_range = [cfg.get('delay_min', 3), cfg.get('delay_max', 8)]
 
     if os.path.exists(SESSION_FILE):
         try:
@@ -250,6 +263,16 @@ def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
             log_both("Stopped by user.", log_type='info', icon='⏹')
             break
 
+        # ── Time window check (place 2 of 3) ─────────────────────────────────
+        if not in_active_hours(cfg):
+            log_both(
+                f"Outside active hours ({cfg.get('run_hour_from', 8)}:00–"
+                f"{cfg.get('run_hour_until', 23)}:00) · pausing until next window",
+                log_type='info', icon='🕐'
+            )
+            shared_state.running = False
+            break
+
         if not cfg['dry_run'] and not shared_state.can_remove():
             limit_type = "Daily" if shared_state.removed_today >= cfg['max_day'] else "Hourly"
             log_both(f"{limit_type} limit reached — stopping.", log_type='warn', icon='🚫')
@@ -299,11 +322,11 @@ def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
 
             save_followers_cache(followers_cache)
 
-            time.sleep(random.uniform(cfg.get('delay_min', 8), cfg.get('delay_max', 20)))
+            time.sleep(random.uniform(cfg.get('delay_min', 3), cfg.get('delay_max', 8)))
 
             batch_count += 1
             if batch_count % cfg.get('batch_size', 5) == 0:
-                rest = random.uniform(90, 180)
+                rest = random.uniform(cfg.get('batch_rest_min', 45), cfg.get('batch_rest_max', 90))
                 log_both(f"Batch rest {rest:.0f}s...", log_type='info', icon='💤')
                 time.sleep(rest)
 
@@ -326,6 +349,16 @@ def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
 def run_daily_cleanup():
     cfg = shared_state.config
 
+    # ── Time window check (place 1 of 3) ─────────────────────────────────────
+    if not in_active_hours(cfg):
+        log_both(
+            f"Outside active hours ({cfg.get('run_hour_from', 8)}:00–"
+            f"{cfg.get('run_hour_until', 23)}:00) · not starting",
+            log_type='info', icon='🕐'
+        )
+        shared_state.running = False
+        return
+
     if not cfg['dry_run'] and not shared_state.can_remove():
         log_both(
             f"Daily limit already reached ({shared_state.removed_today}/{cfg['max_day']}). Stopping.",
@@ -338,7 +371,8 @@ def run_daily_cleanup():
 
     log_both(
         f"Session started · {'DRY RUN' if cfg['dry_run'] else 'LIVE'} · "
-        f"limit {cfg['max_hour']}/hr · {cfg['max_day']}/day · score ≥ {cfg['min_score']}",
+        f"limit {cfg['max_hour']}/hr · {cfg['max_day']}/day · score ≥ {cfg['min_score']} · "
+        f"active hours {cfg.get('run_hour_from', 8)}:00–{cfg.get('run_hour_until', 23)}:00",
         log_type='success', icon='🚀'
     )
 
@@ -378,6 +412,15 @@ def run_daily_cleanup():
             )
 
         while shared_state.running:
+
+            # ── Time window check (place 3 of 3) ─────────────────────────────
+            if not in_active_hours(cfg):
+                log_both(
+                    f"Outside active hours ({cfg.get('run_hour_from', 8)}:00–"
+                    f"{cfg.get('run_hour_until', 23)}:00) · stopping for the night",
+                    log_type='info', icon='🕐'
+                )
+                break
 
             # ── Fetch next follower batch ─────────────────────────────────────
             if not fetch_complete:
