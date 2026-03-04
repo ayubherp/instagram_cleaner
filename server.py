@@ -7,6 +7,7 @@ Then open:  http://localhost:5000
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import threading
+import time
 import json
 import os
 from datetime import datetime, date
@@ -19,7 +20,46 @@ import logging
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)  # only show errors, not every GET request
 
-# ── API Routes ──────────────────────────────────────────────────────────────
+
+# ── Reset thread (hourly + daily) ────────────────────────────────────────────
+
+def reset_loop():
+    """
+    Checks every minute for hour/day boundary crossings.
+    - Resets hourly counter at the top of every clock hour.
+    - Resets daily counter at midnight.
+    """
+    last_hour = datetime.now().hour
+    last_date = date.today()
+
+    while True:
+        time.sleep(60)  # check every minute
+        now   = datetime.now()
+        today = date.today()
+
+        # ── Hourly reset ──────────────────────────────────────────────────
+        if now.hour != last_hour:
+            prev = shared_state.removed_hour
+            shared_state.reset_hour_counter()
+            shared_state.add_log(
+                f"Hourly counter reset · was {prev} · now 0",
+                log_type='info', icon='🕐'
+            )
+            last_hour = now.hour
+
+        # ── Daily reset at midnight ───────────────────────────────────────
+        if today != last_date:
+            prev = shared_state.removed_today
+            with shared_state._lock:
+                shared_state.removed_today = 0
+            shared_state.add_log(
+                f"Daily counter reset · was {prev} · new day started",
+                log_type='info', icon='📅'
+            )
+            last_date = today
+
+
+# ── API Routes ───────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -60,7 +100,6 @@ def start():
     data = request.get_json() or {}
     shared_state.config['dry_run'] = data.get('dry_run', True)
 
-    # Run cleaner in background thread
     thread = threading.Thread(target=run_cleaner, daemon=True)
     thread.start()
     return jsonify({'ok': True})
@@ -73,8 +112,9 @@ def stop():
 
 @app.route('/api/reset', methods=['POST'])
 def reset():
-    shared_state.removed_hour = 0
-    shared_state.removed_today = 0
+    with shared_state._lock:
+        shared_state.removed_hour  = 0
+        shared_state.removed_today = 0
     shared_state.add_log('Counters reset.', log_type='success', icon='🔄')
     return jsonify({'ok': True})
 
@@ -82,16 +122,22 @@ def reset():
 def history():
     return jsonify(shared_state.daily_history)
 
-# ── Cleaner Runner ──────────────────────────────────────────────────────────
+
+# ── Cleaner Runner ───────────────────────────────────────────────────────────
 
 def run_cleaner():
     """Runs the actual Instagram bot removal logic"""
     from main import run_daily_cleanup
     run_daily_cleanup()
 
-# ── Start Server ────────────────────────────────────────────────────────────
+
+# ── Start Server ─────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
+    # Start hourly + daily reset in background
+    reset_thread = threading.Thread(target=reset_loop, daemon=True)
+    reset_thread.start()
+
     print("\n🚀 InstaClean server running!")
     print("📊 Open dashboard: http://localhost:5000\n")
     app.run(debug=False, port=5000, threaded=True)
