@@ -1,6 +1,6 @@
 # 🤖 InstaClean — Instagram Bot Follower Remover
 
-A Python tool to detect and remove bot/fake followers from your Instagram account, with a live visual dashboard.
+A Python tool to detect and remove bot/fake followers from your Instagram account, with a live web dashboard.
 
 > ⚠️ **Disclaimer:** This tool uses an unofficial Instagram API (`instagrapi`). Use at your own risk. Always start with Dry Run mode. The author is not responsible for any account actions taken by Instagram.
 
@@ -8,13 +8,15 @@ A Python tool to detect and remove bot/fake followers from your Instagram accoun
 
 ## ✨ Features
 
-- 🖥️ Live visual dashboard (runs in your browser)
-- 🧪 Dry Run mode — scan without removing anything
-- 🎯 Bot scoring system with 9 detection flags
-- ⏱️ Hourly & daily removal limits
-- 🔄 Session reuse — no repeated logins
+- 🖥️ Live web dashboard — monitor everything in real time
+- 🧪 Dry Run mode — scan without removing anyone
+- 🎯 Bot scoring system with 12 detection flags
+- ⏱️ Hourly & daily removal limits with auto-reset
+- 🕐 Active hours window — stops at night, auto-restarts in the morning
+- 🔄 Resumable — restart anytime and continue exactly where it stopped
+- 💾 Smart cache — following list and follower batches cached locally
+- 🛡️ Mutual filtering — never removes people you follow back
 - 📊 7-day removal history chart
-- 🛡️ Whitelist to protect specific accounts
 - 📋 Real-time activity log
 
 ---
@@ -23,140 +25,99 @@ A Python tool to detect and remove bot/fake followers from your Instagram accoun
 
 ```
 instagram_cleaner/
-├── server.py          # Flask web server — run this to start
-├── main.py            # Instagram bot removal logic
+├── server.py          # Flask web server — run this to start everything
+├── main.py            # Core bot removal logic
 ├── state.py           # Shared state between server and cleaner
 ├── bot_detector.py    # Bot scoring algorithm
-├── config.py          # All settings
-├── rate_limiter.py    # Daily counter with persistence
-├── dashboard.html     # Visual dashboard (served by Flask)
+├── rate_limiter.py    # (legacy, no longer used)
+├── dashboard.html     # Visual dashboard UI
 ├── .env               # Your credentials (never commit this!)
 ├── .gitignore
 └── session/           # Auto-created at runtime
-    ├── session.json       # Saved login session
-    ├── daily_counter.json # Removal counter
-    ├── history.json       # 7-day history
-    └── activity.log       # Log file
+    ├── session.json           # Saved Instagram login session
+    ├── following_cache.json   # Cached following list (for mutual filtering)
+    ├── followers_cache.json   # Cached follower batches + scan progress
+    ├── history.json           # 7-day removal history
+    └── activity.log           # Full activity log
 ```
 
 ---
 
-## 🚀 Setup Guide
+## 🚀 Setup
 
 ### 1. Requirements
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - pip
 
-Check your Python version:
 ```bash
 python --version
 ```
 
-If not installed, download from [python.org](https://python.org).
-
 ---
 
-### 2. Clone the Repository
+### 2. Install Dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/instagram_cleaner.git
-cd instagram_cleaner
+pip install flask flask-cors instagrapi python-dotenv pyotp
 ```
 
 ---
 
-### 3. Install Dependencies
+### 3. Create `.env` File
 
-**Windows (PowerShell):**
-```powershell
-pip install flask flask-cors instagrapi python-dotenv schedule
-```
-
-**Mac / Linux:**
 ```bash
-pip3 install flask flask-cors instagrapi python-dotenv schedule
-```
-
-> 💡 Optional but recommended — use a virtual environment:
-> ```bash
-> python -m venv venv
-> # Windows:
-> .\venv\Scripts\activate
-> # Mac/Linux:
-> source venv/bin/activate
-> ```
-
----
-
-### 4. Create Your `.env` File
-
-Create a file named `.env` in the project root:
-
-**Windows PowerShell:**
-```powershell
+# Windows PowerShell
 New-Item .env -Type File
-```
 
-**Mac/Linux:**
-```bash
+# Mac/Linux
 touch .env
 ```
 
-Open `.env` and add your Instagram credentials:
+Add your credentials:
 ```
 IG_USER=your_instagram_username
 IG_PASS=your_instagram_password
+IG_2FA_SECRET=your_2fa_secret   # only if you use 2FA (TOTP)
 ```
 
 > 🔒 Never share or commit your `.env` file. It is already in `.gitignore`.
 
+> For `IG_2FA_SECRET`: this is the secret key from your authenticator app setup (the string you scan as a QR code). Not the 6-digit code.
+
 ---
 
-### 5. Configure Settings
+### 4. Configure Settings
 
-Open `config.py` and adjust to your needs:
+All settings live in `state.py` under `self.config`. You can also change them live from the dashboard without restarting.
 
 ```python
-config = {
-    # Removal limits
-    "max_removals_per_day":  500,   # recommended: start at 300, ramp up weekly
-    "max_removals_per_hour": 60,    # recommended: never exceed 80
-
-    # Delays between actions (seconds) — randomized to look human
-    "delay_between_actions": (10, 35),
-    "delay_between_batches": (90, 180),
-    "batch_size": 5,
-
-    # Bot detection — minimum score to remove (1–9)
-    # 2 = aggressive | 3 = balanced (default) | 4 = conservative
-    "min_bot_score": 3,
-
-    # Only run between these hours (24hr format)
-    "run_hour_range": (8, 23),
-
-    # Accounts to never remove
-    "whitelist": ["friend1", "brand_collab"],
-
-    # Safety switches
-    "skip_verified": True,   # never remove blue-tick accounts
-    "cooldown_after_block": 1800,  # wait 30min if action blocked
-    "max_errors_before_stop": 3,
-
-    # ALWAYS start with True — switch to False only after reviewing dry run results
-    "dry_run": True,
+self.config = {
+    "max_hour":                100,    # max removals per hour
+    "max_day":                 2000,   # max removals per day
+    "min_score":               3,      # bot score threshold (1–12)
+    "dry_run":                 True,   # True = scan only, no removals
+    "delay_min":               4,      # min seconds between scans
+    "delay_max":               12,     # max seconds between scans
+    "batch_size":              10,     # scans before taking a batch rest
+    "batch_rest_min":          30,     # min batch rest seconds
+    "batch_rest_max":          60,    # max batch rest seconds
+    "whitelist":               [],     # usernames to never remove
+    "follow_ratio_multiplier": 4.0,    # following >= N×followers = bot flag
+    "run_hour_from":           7,      # active window start (24h)
+    "run_hour_until":          23,     # active window end (24h)
 }
 ```
 
 ---
 
-### 6. Run the Dashboard
+### 5. Run
 
 ```bash
 python server.py
 ```
 
-Then open your browser and go to:
+Open your browser:
 ```
 http://localhost:5000
 ```
@@ -165,120 +126,155 @@ http://localhost:5000
 
 ## 🎮 How to Use
 
-### Step 1 — Dry Run First (Safe Mode)
-Make sure `dry_run: True` in `config.py`. Press **Start Cleaning** in the dashboard. The tool will scan your followers and show detected bots in the queue — **without removing anyone.**
+### Step 1 — Dry Run First
+`dry_run` is `True` by default. Press **Start Cleaning**. The tool scans followers and logs detected bots — **no one is removed.**
 
-### Step 2 — Review Results
-Watch the **Bot Queue** and **Activity Log** panels. Ask yourself: do these accounts look like real bots? If yes, the detection is working correctly.
+### Step 2 — Review
+Watch the Activity Log. Do the detected accounts look like real bots? If yes, scoring is working correctly.
 
-### Step 3 — Adjust Sensitivity
-In the dashboard, change **Min Bot Score**:
-- Lower (2) = removes more accounts
-- Higher (4) = removes fewer, only obvious bots
+### Step 3 — Adjust Score Threshold
+- `min_score: 2` → aggressive, catches more, small false positive risk
+- `min_score: 3` → balanced (recommended default)
+- `min_score: 4` → conservative, only obvious bots
 
 ### Step 4 — Go Live
-When confident, toggle **Dry Run OFF** in the dashboard and press **Start Cleaning** again. Real removals will begin.
+Toggle **Live Mode** in the dashboard (or set `dry_run: False` in `state.py`), then press **Start Cleaning**.
 
 ---
 
-## 🎯 Bot Detection — How Scoring Works
+## 🔄 How the Process Works
 
-Each flag below adds **+1** to the bot score. An account is removed if its score reaches `min_bot_score`.
+```
+Step 1 — Fetch following list (user_following_v1)
+         Saved to following_cache.json. Re-used on restart.
+         Must complete fully before Step 2 begins.
+         ↓
+Step 2 — Fetch followers in batches of 200 (user_followers_v1_chunk)
+         Each batch: filter out mutuals + whitelisted → save to followers_cache.json
+         Resumes from cursor if interrupted.
+         ↓
+Step 3 — Bot scanning starts when pending candidates ≥ 700 OR fetch is complete
+         Reads from local cache only — no repeated API follower fetches
+         Scans each account with user_info() → scores → removes if above threshold
+```
+
+**Cache behavior:**
+- Delete `session/following_cache.json` → re-fetches your following list next run
+- Delete `session/followers_cache.json` → starts follower fetch from scratch
+- Delete both → full fresh start
+
+---
+
+## 🎯 Bot Detection Flags
+
+Each flag adds **+1** to the bot score. Account is removed if score ≥ `min_score`.
 
 | Flag | What It Checks |
-|------|---------------|
-| `no_profile_pic` | Account has no photo |
-| `zero_posts` | 0 posts ever published |
+|------|----------------|
+| `no_profile_pic` | No profile photo |
+| `zero_posts` | 0 posts ever |
 | `private_no_posts` | Private account with 0 posts |
 | `no_bio` | Empty biography |
-| `very_new_account` | Less than 3 posts and less than 10 followers |
-| `follow_bomb` | Following 3000+ but has under 100 followers |
-| `mass_follower` | Following 7500+ accounts (near Instagram's limit) |
-| `numeric_suffix` | Username ends in 4+ numbers (e.g. `user48291`) |
-| `random_chars` | Username looks randomly generated (e.g. `xk9m3az`) |
+| `very_new_account` | < 3 posts AND < 10 followers |
+| `follow_bomb` | Following > 500 but < 100 followers |
+| `mass_follower` | Following > 2500 (near Instagram limit) |
+| `high_follow_ratio` | Following ≥ N × followers (default 2×) |
+| `full_ghost` | No bio + no pic + no posts (very high confidence) |
+| `pure_follow_bot` | Following > 1000 but < 50 followers (very high confidence) |
+| `numeric_suffix` | Username ends in 4+ digits e.g. `user48291` |
+| `random_chars` | Username looks auto-generated e.g. `xk9m3az` |
 
-**Max possible score: 9**
+**Max possible score: 12**
 
 ---
 
 ## 📈 Recommended Ramp-Up Plan
 
-| Week | Mode | Max/Day | Max/Hour |
-|------|------|---------|---------|
-| Week 1–2 | Dry Run ✅ | — | — |
+| Week | Mode | max_day | max_hour |
+|------|------|---------|----------|
+| Week 1–2 | Dry Run | — | — |
 | Week 3 | Live | 300 | 40 |
 | Week 4 | Live | 500 | 60 |
-| Week 5+ | Live | 700 | 60 |
+| Week 5+ | Live | 700 | 80 |
 
-> Never jump to high limits immediately. Instagram detects sudden behavior spikes.
+> Never jump straight to high limits, especially on a new IP (VPS). Instagram flags sudden behavioral spikes.
 
 ---
 
-## ⚠️ Warning Signs — Stop Immediately If You See
+## 🛡️ Safety Features
 
-- "Action Blocked" popup on Instagram
-- Asked to verify your phone number
+- ✅ Random delays between every action
+- ✅ Batch resting (pauses every N scans)
+- ✅ Hourly + daily hard limits with automatic reset
+- ✅ Active hours window — stops at night, auto-restarts in the morning
+- ✅ Mutual filtering — never removes people you follow back
+- ✅ Whitelist support
+- ✅ Resumable from exact position on restart
+- ✅ Rate limit detection with 15-min auto-pause
+- ✅ Session reuse — avoids repeated logins
+
+---
+
+## ⚠️ Stop Immediately If You See
+
+- "Action Blocked" on Instagram
+- Phone number verification request
+- Forced login / checkpoint
 - Follower count stops updating
-- Can't follow/unfollow anyone
-- Forced login verification
 
-If any of these happen: stop the script, set limits lower, and wait 24–48 hours before trying again.
+If any of these happen: stop the script, lower your limits, wait 24–48 hours.
 
 ---
 
-## 🛡️ Safety Features Built In
+## 🖥️ Running on a VPS
 
-- ✅ Random delays between every action (not robotic)
-- ✅ Batch resting (pauses every 5 actions)
-- ✅ Hourly and daily hard limits
-- ✅ Only runs during daytime hours
-- ✅ Session reuse (avoids repeated logins)
-- ✅ Auto-stops on consecutive errors
-- ✅ Whitelist for accounts to never remove
-- ✅ Skips verified (blue tick) accounts
+Recommended for 24/7 operation. The active hours window handles when it runs so you don't need to manually start/stop.
 
----
-
-## 🔄 Run Automatically Every Day
-
-**Windows — Task Scheduler:**
-1. Search "Task Scheduler" in the Start menu
-2. Create Basic Task → Daily
-3. Set the action to run:
-   ```
-   python C:\path\to\instagram_cleaner\server.py
-   ```
-
-**Mac/Linux — Cron:**
+**Linux VPS:**
 ```bash
-crontab -e
-# Add this line (runs daily at 10:30am):
-30 10 * * * cd ~/instagram_cleaner && python server.py
+# Install
+sudo apt update && sudo apt install python3 python3-pip screen -y
+pip3 install flask flask-cors instagrapi python-dotenv pyotp --break-system-packages
+
+# Run persistently
+screen -S instaclean
+python3 server.py
+# Detach: Ctrl+A then D
+# Reattach: screen -r instaclean
 ```
+
+**Windows Server VPS:**
+- Connect via Remote Desktop
+- Install Python from python.org (check "Add to PATH")
+- Run `python server.py` in PowerShell
+- Keep the window open or use Task Scheduler for auto-start on reboot
+
+**Important:** Delete `session/session.json` before first run on a new VPS — Instagram may reject a session created on a different IP.
 
 ---
 
 ## ❓ Troubleshooting
 
-**`touch` is not recognized (Windows)**
-```powershell
-New-Item filename -Type File
-```
-
-**`venv\Scripts\activate` fails (Windows)**
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
 **Login keeps failing**
-- Check your `.env` credentials are correct
+- Check `.env` credentials are correct
 - Delete `session/session.json` and try again
-- If you have 2FA enabled, you may need to temporarily disable it or handle the verification code in the login flow
+- For 2FA: make sure `IG_2FA_SECRET` is the TOTP secret key, not the 6-digit code
+
+**Mutual friends being removed**
+- Delete `session/following_cache.json` — it may be empty/corrupted
+- The tool will re-fetch your full following list before scanning
 
 **Rate limit errors**
-- Reduce `max_removals_per_hour` to 30–40
-- Increase `delay_between_actions` to `(15, 45)`
-- Stop the script and wait a few hours
+- Reduce `max_hour` to 40–50
+- Increase `delay_min` / `delay_max`
+- Stop and wait a few hours before restarting
+
+**Bot not restarting in the morning**
+- Make sure you pressed **Start** at least once (not just running `server.py`)
+- Auto-restart only activates after a manual Start — it won't run on a fresh server launch without interaction
+
+**Want a full fresh scan**
+- Delete both `session/following_cache.json` and `session/followers_cache.json`
 
 ---
 
@@ -288,18 +284,12 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 |---------|---------|
 | `instagrapi` | Unofficial Instagram API client |
 | `flask` | Web server for dashboard |
-| `flask-cors` | Cross-origin requests for dashboard |
+| `flask-cors` | Cross-origin requests |
 | `python-dotenv` | Load credentials from `.env` |
-| `schedule` | Daily job scheduling |
+| `pyotp` | 2FA / TOTP code generation |
 
 ---
 
 ## 📄 License
 
 MIT License — free to use and modify.
-
----
-
-## 🙏 Contributing
-
-Pull requests welcome. Please test with Dry Run mode before submitting any changes that affect removal logic.

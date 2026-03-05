@@ -18,24 +18,26 @@ CORS(app)
 
 import logging
 log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)  # only show errors, not every GET request
+log.setLevel(logging.ERROR)
 
 
-# ── Reset thread (hourly + daily) ────────────────────────────────────────────
+# ── Background loop (resets + auto-restart) ───────────────────────────────────
 
-def reset_loop():
+def background_loop():
     """
-    Checks every minute for hour/day boundary crossings.
-    - Resets hourly counter at the top of every clock hour.
-    - Resets daily counter at midnight.
+    Runs every 60 seconds:
+    - Resets hourly counter at the top of every clock hour
+    - Resets daily counter at midnight
+    - Auto-restarts the cleaner when entering active hours if it stopped overnight
     """
     last_hour = datetime.now().hour
     last_date = date.today()
 
     while True:
-        time.sleep(60)  # check every minute
+        time.sleep(60)
         now   = datetime.now()
         today = date.today()
+        cfg   = shared_state.config
 
         # ── Hourly reset ──────────────────────────────────────────────────
         if now.hour != last_hour:
@@ -58,6 +60,20 @@ def reset_loop():
             )
             last_date = today
 
+        # ── Auto-restart when entering active hours ───────────────────────
+        # Conditions: not running + inside active hours + not manually stopped
+        run_from  = cfg.get('run_hour_from',  6)
+        run_until = cfg.get('run_hour_until', 23)
+        in_hours  = run_from <= now.hour < run_until
+
+        if not shared_state.running and in_hours and shared_state.auto_restart:
+            shared_state.add_log(
+                f"Active hours started ({run_from}:00) · auto-restarting...",
+                log_type='success', icon='🌅'
+            )
+            thread = threading.Thread(target=run_cleaner, daemon=True)
+            thread.start()
+
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
@@ -67,18 +83,15 @@ def index():
 
 @app.route('/api/state')
 def get_state():
-    """Dashboard polls this every 2 seconds to update UI"""
     return jsonify(shared_state.to_dict())
 
 @app.route('/api/logs')
 def get_logs():
-    """Returns activity log entries"""
     since = int(request.args.get('since', 0))
     return jsonify(shared_state.logs[since:])
 
 @app.route('/api/queue')
 def get_queue():
-    """Returns current bot queue"""
     return jsonify(shared_state.queue)
 
 @app.route('/api/config', methods=['GET', 'POST'])
@@ -99,6 +112,7 @@ def start():
         return jsonify({'ok': False, 'msg': 'Already running'})
     data = request.get_json() or {}
     shared_state.config['dry_run'] = data.get('dry_run', True)
+    shared_state.auto_restart = True  # user started it — enable auto-restart
 
     thread = threading.Thread(target=run_cleaner, daemon=True)
     thread.start()
@@ -106,7 +120,8 @@ def start():
 
 @app.route('/api/stop', methods=['POST'])
 def stop():
-    shared_state.running = False
+    shared_state.running      = False
+    shared_state.auto_restart = False  # user manually stopped — don't auto-restart
     shared_state.add_log('Stop requested by user.', log_type='info', icon='⏹')
     return jsonify({'ok': True})
 
@@ -126,7 +141,6 @@ def history():
 # ── Cleaner Runner ───────────────────────────────────────────────────────────
 
 def run_cleaner():
-    """Runs the actual Instagram bot removal logic"""
     from main import run_daily_cleanup
     run_daily_cleanup()
 
@@ -134,9 +148,8 @@ def run_cleaner():
 # ── Start Server ─────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    # Start hourly + daily reset in background
-    reset_thread = threading.Thread(target=reset_loop, daemon=True)
-    reset_thread.start()
+    bg_thread = threading.Thread(target=background_loop, daemon=True)
+    bg_thread.start()
 
     print("\n🚀 InstaClean server running!")
     print("📊 Open dashboard: http://localhost:5000\n")

@@ -18,6 +18,7 @@ class SharedState:
         self.removed_hour  = 0
         self.detected      = 0
         self.running       = False
+        self.auto_restart  = False  # set True when user presses Start
 
         # Data
         self.logs          = []   # list of log dicts
@@ -27,17 +28,17 @@ class SharedState:
         # Config (matches config.py — overridable from dashboard)
         self.config = {
             "max_hour":                77,
-            "max_day":                 770,
+            "max_day":                 1077,
             "min_score":               3,
             "dry_run":                 False,
-            "delay_min":               3,
+            "delay_min":               4,
             "delay_max":               8,
             "batch_size":              10,
             "batch_rest_min":          30,
             "batch_rest_max":          60,
             "whitelist":               [],
             "follow_ratio_multiplier": 4.0,  # following >= N × followers → bot flag
-            "run_hour_from":           7,    # active window start (24h)
+            "run_hour_from":           6,    # active window start (24h)
             "run_hour_until":          23,   # active window end (24h)
         }
 
