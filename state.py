@@ -19,7 +19,6 @@ class SharedState:
         self.detected      = 0
         self.running       = False
         self.auto_restart  = False  # set True when user presses Start
-        self._run_lock    = Lock()   # prevents two cleaner threads running at once
 
         # Data
         self.logs          = []   # list of log dicts
@@ -32,8 +31,8 @@ class SharedState:
             "max_day":                 1077,
             "min_score":               3,
             "dry_run":                 False,
-            "delay_min":               4,
-            "delay_max":               6,
+            "delay_min":               3,
+            "delay_max":               5,
             "batch_size":              10,
             "batch_rest_min":          10,
             "batch_rest_max":          20,

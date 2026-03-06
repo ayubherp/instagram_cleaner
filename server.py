@@ -141,14 +141,8 @@ def history():
 # ── Cleaner Runner ───────────────────────────────────────────────────────────
 
 def run_cleaner():
-    if not shared_state._run_lock.acquire(blocking=False):
-        shared_state.add_log("Cleaner already running — skipping duplicate start", log_type='warn', icon='⚠️')
-        return
-    try:
-        from main import run_daily_cleanup
-        run_daily_cleanup()
-    finally:
-        shared_state._run_lock.release()
+    from main import run_daily_cleanup
+    run_daily_cleanup()
 
 
 # ── Start Server ─────────────────────────────────────────────────────────────
