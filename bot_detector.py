@@ -35,9 +35,9 @@ def score_account(user_info, cfg: dict = None) -> dict:
     flags["mass_follower"] = following > 2500
 
     # following >= N × followers (default 4.0x, adjustable)
-    ratio_multiplier = cfg.get('follow_ratio_multiplier', 4.0)
+    ratio_multiplier = cfg.get('follow_ratio_multiplier', 5.0)
     flags["high_follow_ratio"] = (
-        follower > 0 and following >= ratio_multiplier * follower
+        follower > 50 and following >= ratio_multiplier * follower
     ) or (
         follower == 0 and following > 50
     )
@@ -53,7 +53,7 @@ def score_account(user_info, cfg: dict = None) -> dict:
 
     # Follows 1000+ people but has fewer than 50 followers — pure follow bot
     flags["pure_follow_bot"] = (
-        following > 1000 and
+        following > 500 and
         follower < 50
     )
 

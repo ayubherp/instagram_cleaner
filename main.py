@@ -64,11 +64,19 @@ def log_both(message: str, log_type: str = 'info', icon: str = 'ℹ️', level: 
 
 
 def in_active_hours(cfg: dict) -> bool:
-    """Returns True if current hour is within run_hour_from and run_hour_until."""
+    """
+    Returns True if current hour is within run_hour_from and run_hour_until.
+    Supports overnight windows e.g. 14→07 (active 14:00–06:59, inactive 07:00–13:59).
+    """
     now       = datetime.now().hour
     run_from  = cfg.get('run_hour_from',  8)
     run_until = cfg.get('run_hour_until', 23)
-    return run_from <= now < run_until
+    if run_from < run_until:
+        # Normal window e.g. 06→23: active when from <= now < until
+        return run_from <= now < run_until
+    else:
+        # Overnight window e.g. 14→07: active when now >= from OR now < until
+        return now >= run_from or now < run_until
 
 
 # ── 2FA ───────────────────────────────────────────────────────────────────────

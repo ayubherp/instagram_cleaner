@@ -37,9 +37,9 @@ class SharedState:
             "batch_rest_min":          30,
             "batch_rest_max":          60,
             "whitelist":               [],
-            "follow_ratio_multiplier": 4.0,  # following >= N × followers → bot flag
-            "run_hour_from":           6,    # active window start (24h)
-            "run_hour_until":          23,   # active window end (24h)
+            "follow_ratio_multiplier": 5.0,  # following >= N × followers → bot flag
+            "run_hour_from":           14,    # active window start (24h)
+            "run_hour_until":          6,   # active window end (24h)
         }
 
     # ── Logging ────────────────────────────────────────────────────────────

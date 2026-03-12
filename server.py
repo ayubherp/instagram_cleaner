@@ -64,7 +64,11 @@ def background_loop():
         # Conditions: not running + inside active hours + not manually stopped
         run_from  = cfg.get('run_hour_from',  6)
         run_until = cfg.get('run_hour_until', 23)
-        in_hours  = run_from <= now.hour < run_until
+        if run_from < run_until:
+            in_hours = run_from <= now.hour < run_until
+        else:
+            # Overnight window e.g. 14→07
+            in_hours = now.hour >= run_from or now.hour < run_until
 
         if not shared_state.running and in_hours and shared_state.auto_restart:
             shared_state.add_log(
