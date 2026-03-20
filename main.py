@@ -123,49 +123,24 @@ def get_client() -> Client:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_following_pks(cl, user_id) -> set:
-    """
-    Returns the full set of following PKs.
-    Loads from cache when non-empty. Re-fetches if missing or empty (invalid).
-    Only writes cache AFTER the full result is in hand — no partial saves.
-    """
-    if os.path.exists(FOLLOWING_CACHE):
-        try:
-            with open(FOLLOWING_CACHE) as f:
-                data = json.load(f)
-            pks = data.get("pks", [])
-            if len(pks) > 0:
-                log_both(
-                    f"Step 1 · Following cache loaded ✓ · {len(pks)} accounts · "
-                    f"mutuals will be filtered from followers",
-                    log_type='success', icon='✅'
-                )
-                return set(pks)
-            else:
-                log_both(
-                    "Step 1 · Following cache was empty — deleting and re-fetching...",
-                    log_type='warn', icon='⚠️', level='warning'
-                )
-                os.remove(FOLLOWING_CACHE)
-        except Exception as e:
-            log_both(
-                f"Step 1 · Following cache read failed ({e}) — re-fetching...",
-                log_type='warn', icon='⚠️', level='warning'
-            )
-
+    # ── Always fetch fresh from Instagram ────────────────────────────────
     log_both(
-        "Step 1 · Fetching all following accounts — completes fully before follower fetch starts...",
+        "Step 1 · Fetching live following list from Instagram...",
         log_type='info', icon='📡'
     )
 
-    following = cl.user_following_v1(user_id, amount=0)
-    pks = [u.pk for u in following]
+    # Delete stale cache if exists
+    if os.path.exists(FOLLOWING_CACHE):
+        os.remove(FOLLOWING_CACHE)
 
-    if len(pks) > 0:
+    following = cl.user_following_v1(user_id, amount=0)
+    live_pks  = set(u.pk for u in following)
+
+    if live_pks:
         with open(FOLLOWING_CACHE, "w") as f:
-            json.dump({"pks": pks}, f)
+            json.dump({"pks": list(live_pks)}, f)
         log_both(
-            f"Step 1 · Following fetched & cached ✓ · {len(pks)} accounts · "
-            f"starting follower fetch now",
+            f"Step 1 · Following fetched & cached ✓ · {len(live_pks)} accounts",
             log_type='success', icon='💾'
         )
     else:
@@ -174,7 +149,7 @@ def get_following_pks(cl, user_id) -> set:
             log_type='warn', icon='⚠️', level='warning'
         )
 
-    return set(pks)
+    return live_pks
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -321,7 +296,7 @@ def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
                     shared_state.increment_removed()
                     log_both(
                         f"Removed @{result['username']} · "
-                        f"score {result['score']} · "
+                        f"score {result['score']} · {flag_list}",
                         f"{shared_state.removed_today}/{cfg['max_day']} today",
                         log_type='removed', icon='🗑️'
                     )
