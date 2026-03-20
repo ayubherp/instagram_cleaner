@@ -25,7 +25,7 @@ import random
 import logging
 import os
 import json
-from datetime import datetime
+from datetime import datetime, date
 from dotenv import load_dotenv
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, RateLimitError
@@ -123,22 +123,40 @@ def get_client() -> Client:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_following_pks(cl, user_id) -> set:
-    # ── Always fetch fresh from Instagram ────────────────────────────────
+    # ── Load cache if fetched today ───────────────────────────────────────
+    if os.path.exists(FOLLOWING_CACHE):
+        try:
+            with open(FOLLOWING_CACHE) as f:
+                data = json.load(f)
+                pks = data.get("pks", [])
+                fetched_at = data.get("fetched_at", "")
+
+            if pks and fetched_at == str(date.today()):
+                log_both(
+                    f"Step 1 · Following cache is from today · {len(pks)} accounts · skipping re-fetch",
+                    log_type='success', icon='✅'
+                )
+                return set(pks)
+            else:
+                os.remove(FOLLOWING_CACHE)
+        except Exception as e:
+            log_both(
+                f"Step 1 · Following cache read failed ({e}) — re-fetching...",
+                log_type='warn', icon='⚠️', level='warning'
+            )
+
+    # ── Fetch fresh from Instagram ────────────────────────────────────────
     log_both(
         "Step 1 · Fetching live following list from Instagram...",
         log_type='info', icon='📡'
     )
-
-    # Delete stale cache if exists
-    if os.path.exists(FOLLOWING_CACHE):
-        os.remove(FOLLOWING_CACHE)
 
     following = cl.user_following_v1(user_id, amount=0)
     live_pks  = set(u.pk for u in following)
 
     if live_pks:
         with open(FOLLOWING_CACHE, "w") as f:
-            json.dump({"pks": list(live_pks)}, f)
+            json.dump({"pks": list(live_pks), "fetched_at": str(date.today())}, f)
         log_both(
             f"Step 1 · Following fetched & cached ✓ · {len(live_pks)} accounts",
             log_type='success', icon='💾'
