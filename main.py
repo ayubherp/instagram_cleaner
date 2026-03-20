@@ -314,7 +314,7 @@ def scan_and_remove_bots(cl, followers_cache: dict, cfg: dict) -> tuple:
                     shared_state.increment_removed()
                     log_both(
                         f"Removed @{result['username']} · "
-                        f"score {result['score']} · {flag_list}",
+                        f"score {result['score']} · {flag_list}"
                         f"{shared_state.removed_today}/{cfg['max_day']} today",
                         log_type='removed', icon='🗑️'
                     )
